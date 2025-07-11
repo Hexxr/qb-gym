@@ -3,7 +3,7 @@ game 'gta5'
 
 lua54 'yes'
 
-author 'YourName'
+author 'Hexxr'
 description 'QBCore Gym System with qb-target and ox_lib'
 
 shared_script 'config.lua'
