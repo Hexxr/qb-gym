@@ -12,7 +12,7 @@ CreateThread(function()
 
     -- Ped
     lib.requestModel(Config.GymPedModel)
-    local ped = CreatePed(0, Config.GymPedModel, Config.GymPedCoords.x, Config.GymPedCoords.y, Config.GymPedCoords.z - 1.0, Config.GymPedCoords.w, false, true)
+    local ped = CreatePed(0, Config.GymPedModel, Config.GymPedCoords.x, Config.GymPedCoords.y, Config.GymPedCoords.z, Config.GymPedCoords.w, false, true)
     FreezeEntityPosition(ped, true)
     SetEntityInvincible(ped, true)
     SetBlockingOfNonTemporaryEvents(ped, true)
