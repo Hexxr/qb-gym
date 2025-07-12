@@ -11,12 +11,19 @@ shared_script 'config.lua'
 client_scripts {
   '@ox_lib/init.lua',
   'client/override.lua',
+  'client/stat_effects.lua',
+  'client/stats.lua',
   'client/workout.lua',
   'client/shops.lua',
   'client/ui.lua',
-  'client/stats.lua',
   'client/zones.lua',
   'client/testing.lua'
+}
+
+exports{
+  'GetStatEffect',
+  'ApplyStrengthEffect',
+  'ApplyStaminaEffect'
 }
 
 server_script 'server/main.lua'

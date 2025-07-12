@@ -10,21 +10,27 @@ Config.MaxStatLevel = 100
 Config.StatIncreaseAmount = 1
 Config.WorkoutCooldown = 30 -- seconds between workouts
 
+-- Stat Degradation Settings
+Config.EnableStatDegradation = false -- Enable stat loss over time
+Config.DegradationInterval = 3600000 -- 1 hour in milliseconds
+Config.StrengthDegradation = 1 -- Points lost per interval
+Config.StaminaDegradation = 1 -- Points lost per interval
+
 -- Stat Effects Configuration
 Config.StaminaEffects = {
-    [10] = { sprintMultiplier = 1.05 },
-    [25] = { sprintMultiplier = 1.10 },
-    [50] = { sprintMultiplier = 1.20 },
-    [75] = { sprintMultiplier = 1.35 },
-    [100] = { sprintMultiplier = 1.49 }
+    [10] = { sprintMultiplier = 1.05, staminaRegen = 1.0 },
+    [25] = { sprintMultiplier = 1.10, staminaRegen = 1.1 },
+    [50] = { sprintMultiplier = 1.20, staminaRegen = 1.2 },
+    [75] = { sprintMultiplier = 1.35, staminaRegen = 1.3 },
+    [100] = { sprintMultiplier = 1.49, staminaRegen = 1.5 }
 }
 
 Config.StrengthEffects = {
-    [10] = { meleeDamage = 1.1 },
-    [25] = { meleeDamage = 1.2 },
-    [50] = { meleeDamage = 1.35 },
-    [75] = { meleeDamage = 1.5 },
-    [100] = { meleeDamage = 2.0 }
+    [10] = { meleeDamage = 1.1, punchForce = 1.1 },
+    [25] = { meleeDamage = 1.2, punchForce = 1.2 },
+    [50] = { meleeDamage = 1.35, punchForce = 1.4 },
+    [75] = { meleeDamage = 1.5, punchForce = 1.6 },
+    [100] = { meleeDamage = 2.0, punchForce = 2.0 }
 }
 
 -- Treadmills (Stamina)
@@ -80,8 +86,8 @@ Config.Chinups = {
 Config.BenchPress = {
     bench1 = {
         coords = vector3(-1262.77, -354.05, 36.96),
-        animDict = 'amb@world_human_muscle_free_weights@male@barbell@base',
-        anim = 'base',
+        animDict = 'amb@prop_human_seat_muscle_bench_press@exit',
+        anim = 'basegame',
         flag = 1,
         prop = nil,
         label = 'Bench Press',
