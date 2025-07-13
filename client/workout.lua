@@ -1,5 +1,5 @@
 local isWorkingOut = false
-local workoutCooldown = (Config.WorkoutCooldown or 30) * 1000-- Convert seconds to ms if your config is in seconds
+local workoutCooldown = (Config.WorkoutCooldown or 10) * 1000-- Convert seconds to ms since config is in seconds
 local lastWorkoutTime = 0
 
 local function GetWorkoutData(workoutType, key)
@@ -28,9 +28,10 @@ RegisterNetEvent('qb-gym:startWorkout', function(workoutType, key)
 
     local now = GetGameTimer()
     if now - lastWorkoutTime < workoutCooldown then
-    print("Workout debounce: too soon")
-    return
-end
+        print('Workout debounce: too soon')
+        return
+    end
+
     lastWorkoutTime = now
 
 
@@ -185,9 +186,9 @@ end
         local statValue = playerData.metadata[statType]
 
         if statType == 'strength' then
-            exports['qb-gym'].ApplyStrengthEffect(statValue, playerId)
+            exports['qb-gym']:ApplyStrengthEffect(statValue, playerId)
         elseif statType == 'stamina' then
-            exports['qb-gym'].ApplyStaminaEffect(statValue, playerId)
+            exports['qb-gym']:ApplyStaminaEffect(statValue, playerId)
         end
     end
 end)

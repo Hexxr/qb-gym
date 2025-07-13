@@ -8,7 +8,7 @@ Config.GymPassPrice = 1250
 -- Stat Settings
 Config.MaxStatLevel = 100
 Config.StatIncreaseAmount = 1
-Config.WorkoutCooldown = 30 -- seconds between workouts
+Config.WorkoutCooldown = 10 -- seconds between workouts
 
 -- Stat Degradation Settings
 Config.EnableStatDegradation = false -- Enable stat loss over time
@@ -86,10 +86,10 @@ Config.Chinups = {
 Config.BenchPress = {
     bench1 = {
         coords = vector3(-1262.77, -354.05, 36.96),
-        animDict = 'amb@prop_human_seat_muscle_bench_press@exit',
-        anim = 'basegame',
+        animDict = 'amb@prop_human_seat_muscle_bench_press@base',
+        anim = 'base',
         flag = 1,
-        prop = nil,
+        prop = 'prop_weight_bench_02',
         label = 'Bench Press',
         stat = 'strength',
         difficulty = 'medium',

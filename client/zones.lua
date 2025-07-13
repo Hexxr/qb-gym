@@ -72,10 +72,7 @@ CreateThread(function()
         'Treadmills',
         'Dumbbells',
         'Chinups',
-        'BenchPress',
-        'Pushups',
-        'Situps',
-        'Yoga'
+        'BenchPress'
     }
 
     for _, equipType in ipairs(equipmentTypes) do

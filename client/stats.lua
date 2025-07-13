@@ -11,7 +11,6 @@ local StatSetInt = StatSetInt
 local Wait = Wait
 
 local function ApplyStatEffects()
-    local ped = PlayerPedId()
     local playerId = PlayerId()
 
     local stamina = cachedMetadata.stamina or 0
@@ -24,13 +23,13 @@ local function ApplyStatEffects()
     strength = math.max(0, math.min(strength, Config.MaxStatLevel or 100))
 
     -- exports for modifiers
-    exports['qb-gym'].ApplyStaminaEffect(stamina, playerId)
-    exports['qb-gym'].ApplyStrengthEffect(strength, playerId)
+    exports['qb-gym']:ApplyStaminaEffect(stamina, playerId)
+    exports['qb-gym']:ApplyStrengthEffect(strength, playerId)
 
     -- GTA stat bars
-    StatSetInt('MP0_STAMINA', math.floor(stamina), true)
-    StatSetInt('MP0_STRENGTH', math.floor(strength), true)
-    StatSetInt('MP0_LUNG_CAPACITY', math.floor(stamina), true)
+    StatSetInt(`MP0_STAMINA`, math.floor(stamina), true)
+    StatSetInt(`MP0_STRENGTH`, math.floor(strength), true)
+    StatSetInt(`MP0_LUNG_CAPACITY`, math.floor(stamina), true)
 
     statsApplied = true
 
@@ -44,7 +43,7 @@ end
 
 local function DebouncedApplyEffects()
     CreateThread(function()
-        for i = 1, 5 do
+        for _ = 1, 5 do
             Wait(1000)
             if cachedMetadata then
                 ApplyStatEffects()
@@ -175,8 +174,8 @@ RegisterCommand('mystats', function()
     print('Stamina:', cachedMetadata.stamina or 0)
     print('Active Modifiers:', json.encode(statModifiers))
 
-    local strengthEffect = exports['qb-gym'].GetStatEffect('strength', cachedMetadata.strength or 0, Config.StrengthEffects)
-    local staminaEffect = exports['qb-gym'].GetStatEffect('stamina', cachedMetadata.stamina or 0, Config.StaminaEffects)
+    local strengthEffect = exports['qb-gym']:GetStatEffect('strength', cachedMetadata.strength or 0, Config.StrengthEffects)
+    local staminaEffect = exports['qb-gym']:GetStatEffect('stamina', cachedMetadata.stamina or 0, Config.StaminaEffects)
 
     lib.notify({
         type = 'info',
