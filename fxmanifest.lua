@@ -29,6 +29,7 @@ exports{
 server_script 'server/main.lua'
 
 dependencies{
+  'oxmysql',
   'qb-core',
   'ox_lib',
   'qb-target'

@@ -35,7 +35,7 @@ local function ApplyStrengthEffect(strength, playerId)
                 local interval = 500 -- check every half second
                 local endTime = GetGameTimer() + duration
                 while GetGameTimer() < endTime do
-                    SetWeaponDamageModifierThisFrame(joaat('WEAPON_UNARMED'), strengthEffect.punchForce)
+                    SetWeaponDamageModifierThisFrame(joaat(`WEAPON_UNARMED`), strengthEffect.punchForce)
                     Wait(interval)
                 end
             end)
