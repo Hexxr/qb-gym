@@ -1,6 +1,7 @@
 local cachedMetadata = {}
 local statsApplied = false
 local statModifiers = {} -- Track temporary modifiers
+local activeTimeouts = {} -- Track active timeouts for cleanup
 
 -- Localize frequently used functions for performance
 local PlayerPedId = PlayerPedId
@@ -27,9 +28,9 @@ local function ApplyStatEffects()
     exports['qb-gym']:ApplyStrengthEffect(strength, playerId)
 
     -- GTA stat bars
-    StatSetInt(`MP0_STAMINA`, math.floor(stamina), true)
-    StatSetInt(`MP0_STRENGTH`, math.floor(strength), true)
-    StatSetInt(`MP0_LUNG_CAPACITY`, math.floor(stamina), true)
+    StatSetInt(GetHashKey('MP0_STAMINA'), math.floor(stamina), true)
+    StatSetInt(GetHashKey('MP0_STRENGTH'), math.floor(strength), true)
+    StatSetInt(GetHashKey('MP0_LUNG_CAPACITY'), math.floor(stamina), true)
 
     statsApplied = true
 
@@ -39,7 +40,6 @@ local function ApplyStatEffects()
         modifiers = statModifiers
     })
 end
-
 
 local function DebouncedApplyEffects()
     CreateThread(function()
@@ -55,41 +55,41 @@ end
 
 -- Optimized stat update detection
 local function OnStatsUpdate(newMetadata)
-    local needsUpdate = false
-
-    -- Check if stamina changed
-    if newMetadata.stamina ~= cachedMetadata.stamina then
-        needsUpdate = true
-    end
-
-    -- Check if strength changed
-    if newMetadata.strength ~= cachedMetadata.strength then
-        needsUpdate = true
-    end
-
-    if needsUpdate then
+    if newMetadata.stamina ~= cachedMetadata.stamina or
+       newMetadata.strength ~= cachedMetadata.strength then
         cachedMetadata = newMetadata
         DebouncedApplyEffects()
     end
 end
 
--- Temporary stat modifiers (for consumables, etc.)
+-- Temporary stat modifiers
 local function ApplyTemporaryModifier(stat, value, duration)
     if not stat or not value then return end
+
+    -- Cancel existing timeout for this stat
+    if activeTimeouts[stat] then
+        activeTimeouts[stat].cancelled = true  -- Flag as cancelled
+    end
 
     statModifiers[stat] = (statModifiers[stat] or 0) + value
     DebouncedApplyEffects()
 
     if duration and duration > 0 then
-        SetTimeout(duration * 1000, function()
-            statModifiers[stat] = (statModifiers[stat] or 0) - value
-            DebouncedApplyEffects()
+        local timeoutData = { cancelled = false }
+        activeTimeouts[stat] = timeoutData
 
-            lib.notify({
-                type = 'info',
-                description = string.format('%s boost expired', stat:gsub("^%l", string.upper)),
-                icon = 'clock'
-            })
+        SetTimeout(duration * 1000, function()
+            if not timeoutData.cancelled then  -- Check if cancelled
+                statModifiers[stat] = (statModifiers[stat] or 0) - value
+                activeTimeouts[stat] = nil
+                DebouncedApplyEffects()
+
+                lib.notify({
+                    type = 'info',
+                    description = string.format('%s boost expired', stat:gsub("^%l", string.upper)),
+                    icon = 'clock'
+                })
+            end
         end)
     end
 end
@@ -108,7 +108,6 @@ end)
 RegisterNetEvent('QBCore:Player:SetPlayerData', function(data)
     if data.metadata then
         OnStatsUpdate(data.metadata)
-        DebouncedApplyEffects()
     end
 end)
 
@@ -151,86 +150,117 @@ if Config.EnableStatDegradation then
 end
 
 -- Visual feedback for high stats
+local function getTier(level)
+    if level >= 90 then return 3
+    elseif level >= 70 then return 2
+    elseif level >= 50 then return 1
+    else return 0 end
+end
+
+local currentTier = 0
+local lastStaminaTier = 0
+
 CreateThread(function()
     while true do
-        local sleep = 1000
+        local sleep = 2000
+        local ped = PlayerPedId()
+        local strength = (cachedMetadata and cachedMetadata.strength) or 0
+        local stamina = (cachedMetadata and cachedMetadata.stamina) or 0
 
-        if cachedMetadata.strength and cachedMetadata.strength >= 50 then
-            sleep = 500
-            -- Add subtle muscle definition effect
-            if IsPedRunning(PlayerPedId()) or IsPedSprinting(PlayerPedId()) then
-                -- will add particle effects or other visual feedback here
+        local newTier = getTier(strength)
+        local tierChanged = newTier ~= currentTier
+
+        if tierChanged then
+            local oldTier = currentTier  -- Store old tier for comparison
+            currentTier = newTier
+
+            -- Load clipsets before using them
+            if newTier > 0 then
+                local clipset = nil
+                if newTier == 1 then
+                    clipset = 'move_m@brave'
+                elseif newTier == 2 then
+                    clipset = 'move_m@muscle@a'
+                elseif newTier == 3 then
+                    clipset = 'move_m@muscle@a'
+                end
+
+                if clipset then
+                    lib.requestAnimSet(clipset)
+                    SetPedMovementClipset(ped, clipset, 0.25)
+                end
+
+                SetPedConfigFlag(ped, 187, true)
+            else
+                -- Tier 0 - reset to default
+                ResetPedMovementClipset(ped, 0.5)
+                SetPedConfigFlag(ped, 187, false)
             end
+
+            -- Visual notification of change
+            if newTier > oldTier then
+                lib.notify({
+                    title = 'Physical Prowess',
+                    description = 'You feel stronger!',
+                    type = 'success',
+                    icon = 'dumbbell',
+                    duration = 3000
+                })
+            end
+        end
+
+        -- Enhanced stamina effects
+        local staminaTier = getTier(stamina)
+        if staminaTier ~= lastStaminaTier then
+            lastStaminaTier = staminaTier
+
+            if staminaTier >= 3 then
+                -- Elite athlete breathing
+                StatSetInt(GetHashKey('MP0_STAMINA'), 100, true)
+                StatSetInt(GetHashKey('MP0_LUNG_CAPACITY'), 100, true)
+            elseif staminaTier >= 2 then
+                StatSetInt(GetHashKey('MP0_LUNG_CAPACITY'), 80, true)
+            end
+        end
+
+        -- Dynamic stamina regen based on tier
+        if stamina >= 90 and IsPedSprinting(ped) then
+            RestorePlayerStamina(PlayerId(), 1.0)
+            sleep = 500 -- Check more often during sprint
+        elseif stamina >= 70 then
+            RestorePlayerStamina(PlayerId(), 0.5)
         end
 
         Wait(sleep)
     end
 end)
 
--- Debug commands
-RegisterCommand('mystats', function()
-    print('=== Current Gym Stats ===')
-    print('Strength:', cachedMetadata.strength or 0)
-    print('Stamina:', cachedMetadata.stamina or 0)
-    print('Active Modifiers:', json.encode(statModifiers))
+-- Cleanup on player unload or resource stop
+local function cleanup()
+    currentTier = 0
+    lastStaminaTier = 0
+    local ped = PlayerPedId()
+    ResetPedMovementClipset(ped, 0.5)
+    SetPedConfigFlag(ped, 187, false)
+end
 
-    local strengthEffect = exports['qb-gym']:GetStatEffect('strength', cachedMetadata.strength or 0, Config.StrengthEffects)
-    local staminaEffect = exports['qb-gym']:GetStatEffect('stamina', cachedMetadata.stamina or 0, Config.StaminaEffects)
+RegisterNetEvent('QBCore:Client:OnPlayerUnload', cleanup)
 
-    lib.notify({
-        type = 'info',
-        title = 'Gym Stats',
-        description = string.format('STR: %d | STA: %d',
-            cachedMetadata.strength or 0,
-            cachedMetadata.stamina or 0
-        ),
-        duration = 5000,
-        position = 'top-right'
-    })
-
-    if strengthEffect or staminaEffect then
-        Wait(100)
-        lib.notify({
-            type = 'info',
-            title = 'Active Effects',
-            description = string.format('Melee: +%d%% | Sprint: +%d%%',
-                strengthEffect and math.floor((strengthEffect.meleeDamage - 1) * 100) or 0,
-                staminaEffect and math.floor((staminaEffect.sprintMultiplier - 1) * 100) or 0
-            ),
-            duration = 5000,
-            position = 'top-right'
-        })
-    end
-end)
-
--- Test modifier command (for development)
-RegisterCommand('testboost', function(source, args)
-    local stat = args[1] or 'strength'
-    local value = tonumber(args[2]) or 10
-    local duration = tonumber(args[3]) or 30
-
-    ApplyTemporaryModifier(stat, value, duration)
-
-    lib.notify({
-        type = 'success',
-        description = string.format('+%d %s boost for %d seconds', value, stat, duration),
-        icon = 'bolt'
-    })
-end)
-
--- Cleanup on resource stop
 AddEventHandler('onResourceStop', function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
 
-    -- Reset all stat modifiers
+    -- Cancel all active timeouts
+    for _, timeoutData in pairs(activeTimeouts) do
+        if timeoutData then
+            timeoutData.cancelled = true
+        end
+    end
+    activeTimeouts = {}
+
+    -- Reset visual effects
+    cleanup()
+
+    -- Reset stat modifiers
     SetRunSprintMultiplierForPlayer(PlayerId(), 1.0)
     SetPlayerMeleeWeaponDamageModifier(PlayerId(), 1.0)
-end)
-RegisterCommand('refreshstats', function()
-    local playerData = exports['qb-core']:GetPlayerData()
-    if playerData and playerData.metadata then
-        cachedMetadata = playerData.metadata
-        DebouncedApplyEffects()
-        print("Stats manually refreshed")
-    end
 end)

@@ -1,7 +1,7 @@
 CreateThread(function()
-    while not QBCore do
-        Wait(50)
-    end
+    while not QBCore or not QBCore.Functions do
+    Wait(50)
+end
 
     QBCore.Functions.Progressbar = function(name, label, duration, useWhileDead, canCancel, controlDisables, animation, prop, onFinish, onCancel)
         lib.progressBar({

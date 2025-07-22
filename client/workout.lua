@@ -1,57 +1,108 @@
 local isWorkingOut = false
-local workoutCooldown = (Config.WorkoutCooldown or 10) * 1000-- Convert seconds to ms since config is in seconds
+local workoutCooldown = (Config.WorkoutCooldown or 10) * 1000
 local lastWorkoutTime = 0
+local cachedPlayerData = nil
+local spawnedEquipment = nil
+
+-- Update cache when player data changes
+RegisterNetEvent('QBCore:Player:SetPlayerData', function(data)
+    cachedPlayerData = data
+end)
+
+-- Initialize cache when player loads
+RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
+    cachedPlayerData = exports['qb-core']:GetPlayerData()
+end)
+
+-- Get fresh data if cache is empty
+local function GetPlayerData()
+    if not cachedPlayerData then
+        cachedPlayerData = exports['qb-core']:GetPlayerData()
+    end
+    return cachedPlayerData
+end
+
+local function HasGymPass()
+    -- Get fresh item data every time (items change frequently)
+    local items = exports['qb-core']:GetPlayerData().items or {}
+    for _, item in pairs(items) do
+        if item.name == Config.GymPassItem then
+            return true
+        end
+    end
+    return false
+end
 
 local function GetWorkoutData(workoutType, key)
     local pool = Config[workoutType]
     return pool and pool[key]
 end
 
--- Special handling for treadmill positioning
-local function SetupTreadmillPosition(ped, coords, heading)
-    -- Freeze the ped first
+local function SetupEquipmentPosition(ped, coords, heading)
     FreezeEntityPosition(ped, true)
-
-    -- Set position and heading
     SetEntityCoords(ped, coords.x, coords.y, coords.z, false, false, false, false)
     SetEntityHeading(ped, heading or 0.0)
-
-    -- Small delay to ensure positioning
     Wait(100)
-
-    -- Unfreeze for animation
     FreezeEntityPosition(ped, false)
 end
 
+local function GetEquipmentPosition(workoutType, workout)
+    if workoutType == 'Treadmills' and workout.treadmillCoords then
+        return workout.treadmillCoords, workout.treadmillHeading
+    elseif workoutType == 'Chinups' and workout.chinupCoords then
+        return workout.chinupCoords, workout.chinupHeading
+    elseif workout.equipmentCoords then
+        return workout.equipmentCoords, workout.equipmentHeading
+    end
+    return nil, nil
+end
+
+local function CleanupWorkout(ped, prop, animDict, anim)
+    -- Clear animations thoroughly
+    ClearPedTasks(ped)
+    Wait(100)
+    if animDict and anim and IsEntityPlayingAnim(ped, animDict, anim, 3) then
+        ClearPedTasksImmediately(ped)
+    end
+
+    if spawnedEquipment then
+        DetachEntity(ped, true, true)
+    end
+
+    if spawnedEquipment and DoesEntityExist(spawnedEquipment) then
+    DeleteEntity(spawnedEquipment)
+    spawnedEquipment = nil
+end
+
+    -- Clean up prop
+    if prop and DoesEntityExist(prop) then
+        DetachEntity(prop, true, true)
+        DeleteEntity(prop)
+    end
+end
+
 RegisterNetEvent('qb-gym:startWorkout', function(workoutType, key)
-    print('StartWorkout triggered for:', workoutType, key)
+    if isWorkingOut then
+        lib.notify({ type = 'error', description = 'Already working out!' })
+        return
+    end
+
+    if IsEntityDead(PlayerPedId()) then
+        lib.notify({ type = 'error', description = 'You cannot workout while dead.' })
+        return
+    end
 
     local now = GetGameTimer()
     if now - lastWorkoutTime < workoutCooldown then
-        print('Workout debounce: too soon')
+        local remaining = math.ceil((workoutCooldown - (now - lastWorkoutTime)) / 1000)
+        lib.notify({
+            type = 'error',
+            description = ('Rest for %d more seconds'):format(remaining)
+        })
         return
     end
 
-    lastWorkoutTime = now
-
-
-    if isWorkingOut then
-        print('Workout already active — blocking duplicate trigger')
-        return
-    end
-
-    -- Check for gym pass
-    local hasPass = exports['qb-core']:GetPlayerData().items
-    local passFound = false
-
-    for _, item in pairs(hasPass or {}) do
-        if item.name == Config.GymPassItem then
-            passFound = true
-            break
-        end
-    end
-
-    if not passFound then
+    if not HasGymPass() then
         lib.notify({
             type = 'error',
             title = 'No Gym Pass',
@@ -61,70 +112,98 @@ RegisterNetEvent('qb-gym:startWorkout', function(workoutType, key)
     end
 
     local workout = GetWorkoutData(workoutType, key)
-    print('DEBUG WORKOUT DATA:', json.encode(workout))
-
-    if not workout or type(workout.animDict) ~= 'string' or workout.animDict == '' then
-        print('ERROR: Invalid or missing animDict', workout and workout.animDict)
-        lib.notify({ type = 'error', description = 'Invalid workout animation' })
+    if not workout then
+        lib.notify({ type = 'error', description = 'Invalid workout!' })
         return
     end
 
-    if type(workout.anim) ~= 'string' or workout.anim == '' then
-        print('ERROR: Invalid or missing animation name', workout and workout.anim)
-        lib.notify({ type = 'error', description = 'Invalid workout animation' })
+    if not workout.animDict or workout.animDict == '' or not workout.anim or workout.anim == '' then
+        lib.notify({ type = 'error', description = 'Invalid workout animation!' })
+        return
+    end
+
+    local playerData = GetPlayerData()
+    if not playerData.metadata then
+        lib.notify({ type = 'error', description = 'Player data not loaded!' })
         return
     end
 
     isWorkingOut = true
+    lastWorkoutTime = now
 
     local ped = PlayerPedId()
-    local propEntity
+    local propEntity = nil
+    local statType = workout.stat or 'strength'
+    local currentStat = playerData.metadata[statType] or 0
 
-    -- Show current stats before workout
-    local metadata = exports['qb-core']:GetPlayerData().metadata
-    local currentStat = metadata[workout.stat] or 0
     lib.notify({
         type = 'info',
-        description = ('Current %s: %d'):format(workout.stat, currentStat)
+        description = ('Current %s: %d'):format(statType, currentStat)
     })
 
-    -- Skill Check with dynamic difficulty based on stat level
-    local difficulty = workout.difficulty
+    local difficulty = workout.difficulty or 'easy'
     if currentStat >= 75 then
-        difficulty = 'hard' -- Make it harder for advanced players
+        difficulty = 'hard'
     elseif currentStat >= 50 then
         difficulty = 'medium'
     end
 
     local success = lib.skillCheck({ difficulty }, { 'w', 'a', 's', 'd' })
     if not success then
-        lib.notify({ type = 'error', title = 'Workout', description = 'Failed the set. Try again!' })
+        lib.notify({
+            type = 'error',
+            title = 'Workout Failed',
+            description = 'Better luck next time!'
+        })
         isWorkingOut = false
         return
     end
 
-    -- Special handling for equipment positioning
-    if workout.equipmentCoords then
-        SetupTreadmillPosition(ped, workout.equipmentCoords, workout.equipmentHeading)
-    elseif workoutType == 'Treadmills' and workout.treadmillCoords then
-        SetupTreadmillPosition(ped, workout.treadmillCoords, workout.treadmillHeading)
+    local coords, heading = GetEquipmentPosition(workoutType, workout)
+    if coords then
+        SetupEquipmentPosition(ped, coords, heading)
     end
 
-    -- Load Prop if needed
+    if workout.equipment then
+    print("DEBUG - workout.equipment value:", workout.equipment, "Type:", type(workout.equipment))
+
+    if type(workout.equipment) == "string" then
+        lib.requestModel(workout.equipment)
+    end
+
+    local pedCoords = GetEntityCoords(ped)
+
+    local modelToUse = type(workout.equipment) == "string" and joaat(workout.equipment) or workout.equipment
+
+    spawnedEquipment = CreateObject(modelToUse,
+        pedCoords.x,
+        pedCoords.y,
+        pedCoords.z,
+        true, true, true)
+
+    SetEntityHeading(spawnedEquipment, GetEntityHeading(ped))
+    PlaceObjectOnGroundProperly(spawnedEquipment)
+    FreezeEntityPosition(spawnedEquipment, true)
+
+    Wait(100)
+    local benchCoords = GetEntityCoords(spawnedEquipment)
+    local benchHeading = GetEntityHeading(spawnedEquipment)
+
+    AttachEntityToEntity(ped, spawnedEquipment, -1, 0.0, 0.0, 0.6, 0.0, 0.0, 180.0, false, false, false, false, 2, true)
+end
+
     if workout.prop then
         local propHash = joaat(workout.prop)
         lib.requestModel(propHash)
-        local coords = GetEntityCoords(ped)
-        propEntity = CreateObject(propHash, coords.x, coords.y, coords.z + 0.2, true, true, true)
 
-        -- Different attachment points for different props
-        local boneIndex = 28422 -- Right hand default
+        local pedCoords = GetEntityCoords(ped)
+        propEntity = CreateObject(propHash, pedCoords.x, pedCoords.y, pedCoords.z + 0.2, true, true, true)
+
+        local boneIndex = 28422
         local xPos, yPos, zPos = 0.0, 0.0, 0.0
         local xRot, yRot, zRot = 0.0, 0.0, 0.0
 
         if workout.prop == 'prop_curl_bar_01' then
-            -- Dumbbell specific positioning
-            boneIndex = 28422
             xPos, yPos, zPos = 0.09, 0.0, -0.02
             xRot, yRot, zRot = 90.0, 0.0, 0.0
         end
@@ -134,22 +213,8 @@ RegisterNetEvent('qb-gym:startWorkout', function(workoutType, key)
             true, true, false, true, 1, true)
     end
 
-    -- Animation
-    lib.playAnim(
-        ped,                -- ped
-        workout.animDict,   -- animDictionary
-        workout.anim,       -- animationName
-        8.0,               -- blendInSpeed
-        -8.0,              -- blendOutSpeed
-        -1,                -- duration (-1 for continuous)
-        workout.flag or 1, -- flags (use workout specific or default to 1)
-        0.0,               -- startPhase
-        false,             -- phaseControlled
-        0,                 -- controlFlags
-        false              -- overrideCloneUpdate
-    )
+    lib.playAnim(ped, workout.animDict, workout.anim, 8.0, -8.0, -1, workout.flag or 1, 0.0, false, 0, false)
 
-    -- Progress with dynamic duration based on equipment
     lib.progressBar({
         duration = workout.duration or 5000,
         label = workout.label or 'Working out...',
@@ -164,50 +229,40 @@ RegisterNetEvent('qb-gym:startWorkout', function(workoutType, key)
         },
     })
 
-    -- Stop animation after progress bar
-    ClearPedTasks(ped)
+    CleanupWorkout(ped, propEntity, workout.animDict, workout.anim)
 
-    -- Cleanup
-    if propEntity and DoesEntityExist(propEntity) then
-        DetachEntity(propEntity, true, true)
-        DeleteEntity(propEntity)
+    TriggerServerEvent('qb-gym:reward', statType)
+
+    local newStatValue = math.min(currentStat + 1, Config.MaxStatLevel or 100)
+    if statType == 'strength' then
+        exports['qb-gym']:ApplyStrengthEffect(newStatValue, PlayerId())
+    elseif statType == 'stamina' then
+        exports['qb-gym']:ApplyStaminaEffect(newStatValue, PlayerId())
     end
 
-    --Reward Logic
-    TriggerServerEvent('qb-gym:reward', workout.stat or 'strength')
+    lib.notify({
+        type = 'success',
+        title = 'Workout Complete',
+        description = 'Great set!'
+    })
 
     isWorkingOut = false
-
-    local playerData = exports['qb-core']:GetPlayerData()
-    local playerId = PlayerId()
-    local statType = workout.stat or 'strength'
-
-    if playerData and playerData.metadata and playerData.metadata[statType] then
-        local statValue = playerData.metadata[statType]
-
-        if statType == 'strength' then
-            exports['qb-gym']:ApplyStrengthEffect(statValue, playerId)
-        elseif statType == 'stamina' then
-            exports['qb-gym']:ApplyStaminaEffect(statValue, playerId)
-        end
-    end
 end)
 
--- Add command to check if player has gym pass
-RegisterCommand('gympass', function()
-    local hasPass = exports['qb-core']:GetPlayerData().items
-    local passFound = false
+RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
+    cachedPlayerData = nil
+    isWorkingOut = false
+end)
 
-    for _, item in pairs(hasPass or {}) do
-        if item.name == Config.GymPassItem then
-            passFound = true
-            break
-        end
-    end
+CreateThread(function()
+    Wait(1000)
+    cachedPlayerData = exports['qb-core']:GetPlayerData()
+end)
 
-    if passFound then
-        lib.notify({ type = 'success', description = 'You have an active gym pass!' })
-    else
-        lib.notify({ type = 'error', description = 'You don\'t have a gym pass. Visit the gym reception!' })
-    end
+AddEventHandler('onResourceStop', function(resourceName)
+    if GetCurrentResourceName() ~= resourceName then return end
+
+    local ped = PlayerPedId()
+    CleanupWorkout(ped, nil, nil, nil)
+    isWorkingOut = false
 end)

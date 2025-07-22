@@ -1,12 +1,49 @@
-local QBCore = exports['qb-core']:GetCoreObject({'Functions', 'Commands'})
+local QBCore = exports['qb-core']:GetCoreObject({'Commands'})
 local lastWorkoutTime = {}
 local WORKOUT_COOLDOWN = 30000 -- 30 seconds cooldown between workouts
 local dailyWorkoutCount = {}
+local playerWorkoutHistory = {}
+local pendingStatUpdates = {}
+
+local function debugPrint(...)
+    if Config.Debug then
+        print('^3[QB-GYM DEBUG]^7', ...)
+    end
+end
+
+local function checkRateLimit(src)
+    local history = playerWorkoutHistory[src] or {}
+    local now = GetGameTimer()
+
+    debugPrint('Rate limit check for player', src, '- Workouts in last 5 min:', #history)
+
+    --remove old entries (older than 5 mins)
+    local recentWorkouts = {}
+    for _, time in ipairs(history) do
+        if now - time < 300000 then
+            table.insert(recentWorkouts, time)
+        end
+    end
+
+    --check if too many recent workouts
+    if #recentWorkouts >= 10 then
+        return false, "Working out too frequently! Break Time."
+    end
+
+    table.insert(recentWorkouts, now)
+    playerWorkoutHistory[src] = recentWorkouts
+
+    return true
+end
 
 RegisterServerEvent('qb-gym:buyPass', function()
     local src = source
+    debugPrint('Player', src, 'attempting to buy gym pass')
     local Player = exports['qb-core']:GetPlayer(src)
-    if not Player then return end
+    if not Player then
+        debugPrint('Player not found for source:', src)
+        return
+    end
 
     local price = Config.GymPassPrice
     local item = Config.GymPassItem
@@ -15,6 +52,7 @@ RegisterServerEvent('qb-gym:buyPass', function()
     local ped = GetPlayerPed(src)
     local pedCoords = GetEntityCoords(ped)
     local distance = #(pedCoords - Config.GymPedCoords.xyz)
+    debugPrint('Purchase distance check:', distance, 'meters')
 
     if distance > 5.0 then
         print(('qb-gym: Player %s attempted to buy gym pass from distance %.2f'):format(src, distance))
@@ -33,6 +71,7 @@ RegisterServerEvent('qb-gym:buyPass', function()
     end
 
     if Player.Functions.RemoveMoney('cash', price) then
+        debugPrint('Money removed successfully, adding gym pass item')
         -- Add pass with metadata
         local info = {
             purchaseDate = os.time(),
@@ -64,6 +103,7 @@ end)
 
 RegisterServerEvent('qb-gym:reward', function(statType)
     local src = source
+    debugPrint('Workout reward triggered - Source:', src, 'Stat:', statType)
     local Player = exports['qb-core']:GetPlayer(src)
     if not Player then return end
 
@@ -73,6 +113,8 @@ RegisterServerEvent('qb-gym:reward', function(statType)
         DropPlayer(source, "Invalid Gym Data.")
         return
     end
+
+    debugPrint('Stat validation passed for:', statType)
 
     -- Check for gym pass
     local hasPass = Player.Functions.GetItemByName(Config.GymPassItem)
@@ -98,9 +140,19 @@ RegisterServerEvent('qb-gym:reward', function(statType)
     local currentTime = GetGameTimer()
     if lastWorkoutTime[src] and (currentTime - lastWorkoutTime[src]) < WORKOUT_COOLDOWN then
         local remainingTime = math.ceil((WORKOUT_COOLDOWN - (currentTime - lastWorkoutTime[src])) / 1000)
+        debugPrint('Time since last workout:', lastWorkoutTime, 'ms')
         TriggerClientEvent('ox_lib:notify', src, {
             type = 'error',
             description = ('You need to rest for %d more seconds'):format(remainingTime)
+        })
+        return
+    end
+
+    local allowed, message = checkRateLimit(src)
+    if not allowed then
+        TriggerClientEvent('ox_lib:notify', src, {
+            type = 'error',
+            description = message
         })
         return
     end
@@ -110,6 +162,7 @@ RegisterServerEvent('qb-gym:reward', function(statType)
 
     -- Update stats with cap
     local current = Player.PlayerData.metadata[statType] or 0
+    debugPrint('Current', statType, 'level:', current)
     local maxStat = Config.MaxStatLevel or 100
 
     if current >= maxStat then
@@ -161,14 +214,44 @@ RegisterServerEvent('qb-gym:reward', function(statType)
         newLevel
     ))
 
-    -- Save to database
-    exports.oxmysql:insert('INSERT INTO gym_workouts (citizenid, stat_type, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?)', {
-        Player.PlayerData.citizenid,
-        statType,
-        current,
-        newLevel,
-        os.time()
-    })
+    -- Track progress for batch saving
+    if not pendingStatUpdates[citizenid] then
+        debugPrint('Creating new pending stat tracking for', citizenid)
+        pendingStatUpdates[citizenid] = {
+            strength_start = Player.PlayerData.metadata.strength or 0,
+            stamina_start = Player.PlayerData.metadata.stamina or 0,
+            strength_current = Player.PlayerData.metadata.strength or 0,
+            stamina_current = Player.PlayerData.metadata.stamina or 0
+        }
+    end
+
+    -- Update current values
+    pendingStatUpdates[citizenid][statType .. '_current'] = newLevel
+
+    -- Check if we should save (every 5 levels or at milestones)
+    local gainedLevels = newLevel - pendingStatUpdates[citizenid][statType .. '_start']
+    debugPrint('Gained levels since last save:', gainedLevels)
+
+    if gainedLevels >= 5 or newLevel % 10 == 0 or newLevel == maxStat then
+        -- Save to database
+        exports.oxmysql:insert('INSERT INTO gym_workouts (citizenid, stat_type, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?)', {
+            Player.PlayerData.citizenid,
+            statType,
+            pendingStatUpdates[citizenid][statType .. '_start'],
+            newLevel,
+            os.time()
+        })
+
+        -- Reset the starting point
+        pendingStatUpdates[citizenid][statType .. '_start'] = newLevel
+
+        -- Log milestone
+        print(('[qb-gym] Milestone: %s reached %s level %d'):format(
+            Player.PlayerData.name,
+            statType,
+            newLevel
+        ))
+    end
 
     -- Give different messages based on level
     local message = 'You feel stronger!'
@@ -185,6 +268,18 @@ RegisterServerEvent('qb-gym:reward', function(statType)
         title = 'Workout Complete',
         description = message
     })
+end)
+
+lib.callback.register('qb-gym:server:formatDate', function(source, timestamp)
+    if not timestamp then
+        return "Never"
+    end
+
+    return os.date('%m/%d/%Y', timestamp)
+end)
+
+exports('GetServerTime', function()
+    return os.time()
 end)
 
 -- Admin command to check player stats
@@ -237,19 +332,47 @@ QBCore.Commands.Add('setgymstat', 'Set a player\'s gym stat', {
     })
 end, 'admin')
 
+QBCore.Commands.Add('testboost', 'Test a temporary stat boost', {
+    {name = 'stat', help = 'strength or stamina'},
+    {name = 'value', help = 'Boost amount (default: 10)'},
+    {name = 'duration', help = 'Duration in seconds (default: 30)'}
+}, false, function(source, args)
+    local stat = args[1] or 'strength'
+    local value = tonumber(args[2]) or 10
+    local duration = tonumber(args[3]) or 30
+
+    TriggerClientEvent('qb-gym:client:testBoost', source, stat, value, duration)
+end, 'admin')
+
 -- Clean up on player disconnect
 AddEventHandler('playerDropped', function()
     local src = source
     lastWorkoutTime[src] = nil
+    playerWorkoutHistory[src] = nil
 
-    -- Clean up daily count if needed
     local Player = exports['qb-core']:GetPlayer(source)
-    if Player and dailyWorkoutCount[Player.PlayerData.citizenid] then
-        -- Save to database before cleanup
-        exports.oxmysql:update('UPDATE players SET last_workout = ? WHERE citizenid = ?', {
-            os.time(),
-            Player.PlayerData.citizenid
-        })
+    if Player then
+        local citizenid = Player.PlayerData.citizenid
+
+        -- Save any pending updates before cleanup
+        if pendingStatUpdates[citizenid] then
+            -- Save final progress if any gains were made
+            for _, statType in ipairs({'strength', 'stamina'}) do
+                local gained = pendingStatUpdates[citizenid][statType .. '_current'] - pendingStatUpdates[citizenid][statType .. '_start']
+                if gained > 0 then
+                    exports.oxmysql:insert('INSERT INTO gym_workouts (citizenid, stat_type, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?)', {
+                        citizenid,
+                        statType,
+                        pendingStatUpdates[citizenid][statType .. '_start'],
+                        pendingStatUpdates[citizenid][statType .. '_current'],
+                        os.time()
+                    })
+                end
+            end
+            pendingStatUpdates[citizenid] = nil
+        end
+
+        dailyWorkoutCount[citizenid] = nil
     end
 end)
 
@@ -277,4 +400,28 @@ CreateThread(function()
             INDEX idx_citizenid (citizenid)
         )
     ]])
+end)
+
+CreateThread(function()
+    while true do
+        Wait(3600000) -- Every hour
+
+        -- Only run if table has entries
+        if next(dailyWorkoutCount) then
+            local currentDate = os.date('%Y-%m-%d')
+            local cleaned = 0
+
+            for citizenid, data in pairs(dailyWorkoutCount) do
+                if data.date ~= currentDate then
+                    dailyWorkoutCount[citizenid] = nil
+                    cleaned = cleaned + 1
+                end
+            end
+
+            -- Log cleanup for monitoring
+            if cleaned > 0 then
+                print(('[qb-gym] Cleaned %d expired workout entries'):format(cleaned))
+            end
+        end
+    end
 end)
