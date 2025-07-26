@@ -4,11 +4,13 @@ Config.GymPedModel = "a_m_y_clubcust_04"
 Config.GymPedCoords = vector4(-1255.53, -354.77, 35.96, 296.64)
 Config.GymPassItem = 'gym_pass'
 Config.GymPassPrice = 1250
+Config.Debug = false
 
 -- Stat Settings
 Config.MaxStatLevel = 100
 Config.StatIncreaseAmount = 1
 Config.WorkoutCooldown = 10 -- seconds between workouts
+Config.BonusWorkoutThreshold = 5
 
 -- Stat Degradation Settings
 Config.EnableStatDegradation = false -- Enable stat loss over time
@@ -69,8 +71,8 @@ Config.Dumbbells = {
 Config.Chinups = {
     chinup1 = {
         coords = vector3(-1256.68, -359.83, 36.96),
-        chinupCoords = vector3(-1256.91, -358.43, 35.64),
-        chinupHeading = 295.7,
+        chinupCoords = vector3(-1257.00, -358.44, 35.67),
+        chinupHeading = 119.6,
         animDict = 'amb@prop_human_muscle_chin_ups@male@base',
         anim = 'base',
         flag = 1,
@@ -78,7 +80,9 @@ Config.Chinups = {
         label = 'Do Chin-ups',
         stat = 'strength',
         difficulty = 'hard',
-        duration = 10000
+        duration = 10000,
+        barHeight = 38.5, -- Adjust based on your gym's chin-up bar
+        animOffset = vector3(0.0, 0.0, 0.0) -- Fine-tune player position during animation
     }
 }
 
@@ -86,10 +90,11 @@ Config.Chinups = {
 Config.BenchPress = {
     bench1 = {
         coords = vector3(-1262.77, -354.05, 36.96),
-        animDict = 'amb@prop_human_seat_muscle_bench_press@base',
-        anim = 'base',
+        animDict = 'amb@prop_human_seat_muscle_bench_press@idle_a',
+        anim = 'idle_a',
         flag = 1,
-        prop = nil,
+        prop = 'prop_barbell_20kg',
+        equipment = 'prop_weight_bench_02',
         label = 'Bench Press',
         stat = 'strength',
         difficulty = 'medium',
