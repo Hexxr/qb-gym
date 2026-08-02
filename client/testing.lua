@@ -1,5 +1,3 @@
--- Add this temporarily to your client script to help position the treadmill coordinates
-
 local testingTreadmill = false
 local treadmillPos = nil
 
