@@ -1,8 +1,6 @@
 fx_version 'cerulean'
 game 'gta5'
 
-lua54 'yes'
-
 author 'Hexxr'
 description 'QBCore Gym System with qb-target and ox_lib'
 version '2.0.0'
@@ -21,12 +19,6 @@ client_scripts {
   'client/ui.lua',
   'client/zones.lua',
   --'client/testing.lua'-- uncomment for adding new workout locations/fine-tuning
-}
-
-exports{
-  'GetStatEffect',
-  'ApplyStrengthEffect',
-  'ApplyStaminaEffect'
 }
 
 server_scripts{
